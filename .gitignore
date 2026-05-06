@@ -1,0 +1,49 @@
+# --- Python ---
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Privacy / sensitive ---
+# Voice transcript log + cached chemical/translation data — contains user history.
+memory.db
+memory.db-journal
+memory.db-wal
+memory.db-shm
+
+# API key (kept in $HOME, but defensive in case it's ever copied here).
+.gemini_key
+.env
+*.key
+*.pem
+
+# --- Binary blobs we don't want in git ---
+# Music library is copyrighted material; users add their own files.
+music/*.mp3
+music/*.m4a
+music/*.flac
+music/*.wav
+music/*.ogg
+music/*.opus
+
+# Recorded mic samples used during ad-hoc debugging.
+*.wav
+*.raw
+
+# --- Editor / OS ---
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# --- Wake-word model artifacts ---
+# Custom-trained ONNX models (large, regeneratable) — keep training scripts only.
+*.onnx
+wake_models/

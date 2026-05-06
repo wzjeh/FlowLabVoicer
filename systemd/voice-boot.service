@@ -1,0 +1,18 @@
+[Unit]
+Description=Voice Assistant Boot Greeter (LED + chime)
+After=network-online.target sound.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=wyzhaoc
+Group=wyzhaoc
+SupplementaryGroups=spi audio
+WorkingDirectory=/home/wyzhaoc/voice
+ExecStart=/home/wyzhaoc/voice/.venv/bin/python /home/wyzhaoc/voice/bin/boot_greeter.py
+RemainAfterExit=no
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

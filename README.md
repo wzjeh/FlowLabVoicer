@@ -55,37 +55,67 @@ voice/
 │   └── test_mic.py
 │
 └── systemd/
-    └── voice-boot.service                    # boot-time chime + LED greeter
+    ├── voice-boot.service                    # boot-time chime + LED greeter
+    └── voice-chat.service                    # auto-start chat in wake mode
 ```
 
-## Boot-time greeter (systemd, user-mode)
+## Physical pushbutton (Sanwa OBSF-30-K or any momentary switch)
 
-The unit at `systemd/voice-boot.service` plays a triple-beep through the USB
-speaker and sets LEDs to idle, confirming the device is alive after power-on.
+A pushbutton wired to GPIO 17 (header pin 11) and GND (pin 9) gives a
+hands-free, gloves-friendly trigger that's identical to pressing ENTER
+in the terminal. Internal pull-up; no resistor needed.
 
-It's a **user-mode** systemd unit because the chime goes through PipeWire,
-which only runs inside a user session. Install once with:
+```
+   one terminal   -> GPIO 17  (header pin 11)
+   other terminal -> GND       (header pin 9 or any GND)
+```
+
+Test the wiring before launching chat:
 
 ```bash
-# enable user systemd at boot regardless of console / SSH login
+.venv/bin/python tests/test_button.py    # press button — terminal prints each press
+```
+
+## Boot-time greeter + chat auto-start (systemd, user-mode)
+
+Two **user-mode** units together:
+
+| Unit | Type | Purpose |
+|---|---|---|
+| `voice-boot.service` | oneshot | Triple-beep + LED idle on boot — confirms device alive |
+| `voice-chat.service` | simple   | Long-running `bin/chat.py --wake alexa`, auto-restart on crash |
+
+User-mode because PipeWire / mic / speaker live in the user session.
+Install once:
+
+```bash
+# 1. enable user systemd at boot regardless of console / SSH login
 sudo loginctl enable-linger $USER
 
-# install the unit and enable on boot
+# 2. install both units
 mkdir -p ~/.config/systemd/user
 cp ~/voice/systemd/voice-boot.service ~/.config/systemd/user/
+cp ~/voice/systemd/voice-chat.service ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now voice-boot.service
 
-# confirm
-systemctl --user status voice-boot.service
+# 3. enable on boot (greeter chimes; chat then takes over)
+systemctl --user enable --now voice-boot.service
+systemctl --user enable --now voice-chat.service
+
+# 4. verify
+systemctl --user status voice-boot.service voice-chat.service
 ```
 
 Run-time controls:
 ```bash
-systemctl --user disable voice-boot.service     # turn off auto-start
-systemctl --user start voice-boot.service       # play the chime now
-journalctl --user-unit voice-boot.service -b    # this-boot logs
+systemctl --user disable voice-chat.service        # stop auto-start
+systemctl --user restart voice-chat.service        # restart now
+journalctl --user-unit voice-chat.service -fb      # tail this-boot logs
+journalctl --user-unit voice-chat.service -b -n50  # last 50 from this boot
 ```
+
+In daemon (no-TTY) mode, ENTER is unreachable; trigger conversation via
+the wake word ("alexa, ...") or the GPIO pushbutton instead.
 
 ## How to run
 

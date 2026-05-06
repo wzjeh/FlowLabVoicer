@@ -79,6 +79,15 @@ WAKE_MIN_PEAK_RMS = 4000.0
 LED_NUM_PIXELS = 3
 LED_DEFAULT_BRIGHTNESS = 8
 
+# ---------- physical button (e.g. Sanwa OBSF-30-K) ----------
+# BCM pin number of the input — header pin 11 = BCM 17. Wire one terminal
+# to this pin and the other to any GND pin. Internal pull-up, so the
+# button only needs the two terminals (no resistor). Set to None to
+# disable the button feature entirely.
+# GPIO 17 was previously claimed by the ReSpeaker HAT v2.0's onboard
+# button; with the HAT removed it's free for the external Sanwa.
+BUTTON_GPIO_PIN = 17
+
 # ---------- PubChem (chemistry tool backend) ----------
 PUBCHEM_BASE_URL = "https://pubchem.ncbi.nlm.nih.gov/rest"
 PUBCHEM_HTTP_TIMEOUT_S = 20.0

@@ -1,0 +1,34 @@
+[Unit]
+Description=Nagaki Lab voice assistant (chat in wake mode)
+# user-mode service — same reasoning as voice-boot.service: PipeWire +
+# the user's mic/speaker stack only exist inside the user session, so
+# this service must run inside `systemctl --user`. Requires
+# `loginctl enable-linger wyzhaoc` (one-time) so the user's systemd
+# instance starts at boot regardless of console / SSH login.
+#
+# Long-running, auto-restart on crash. Wake word (alexa) and the GPIO
+# pushbutton are the two input paths that work without a TTY; the
+# keyboard-ENTER path is unavailable in daemon mode (stdin = /dev/null).
+After=pipewire.socket pipewire.service sound.target voice-boot.service
+Wants=pipewire.socket
+# Only start after the chime greeter has finished, so the chime isn't
+# masked by the chat startup banner / wake-word ack.
+Requires=voice-boot.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/wyzhaoc/voice
+ExecStart=/home/wyzhaoc/voice/.venv/bin/python /home/wyzhaoc/voice/bin/chat.py --wake alexa --quiet
+# A clean restart on crash (network blip, model 1011, etc). Wait 3 s
+# between attempts so we don't tight-loop on a permanent failure.
+Restart=on-failure
+RestartSec=3s
+# Burst limit: at most 5 restarts in 60 s; if it keeps crashing past
+# that, leave it stopped so we can investigate manually.
+StartLimitBurst=5
+StartLimitIntervalSec=60s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

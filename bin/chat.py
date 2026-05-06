@@ -23,6 +23,7 @@ from nagaki_lab import config, prompts
 from nagaki_lab.audio.input import MicCapture
 from nagaki_lab.audio.output import SpeakerPlayback
 from nagaki_lab.audio import bluetooth as bt
+from nagaki_lab.button import ButtonListener
 from nagaki_lab.leds import LEDStatus
 from nagaki_lab.live import LiveSession
 from nagaki_lab.memory import TurnLog
@@ -50,6 +51,9 @@ def parse_args() -> argparse.Namespace:
                     help="BT headset name substring (for HFP profile selection)")
     ap.add_argument("--quiet", action="store_true",
                     help="Suppress per-event timing log lines")
+    ap.add_argument("--no-button", action="store_true",
+                    help="Disable the GPIO pushbutton (default: enabled if "
+                         f"BUTTON_GPIO_PIN={config.BUTTON_GPIO_PIN} is set)")
     return ap.parse_args()
 
 
@@ -95,6 +99,19 @@ async def amain(args: argparse.Namespace) -> None:
 
     ui = TerminalUI(loop, turn_log)
 
+    # Physical pushbutton input — same callback the keyboard ENTER triggers,
+    # so it's a third input surface alongside ENTER and the wake word. The
+    # only one of the three that survives systemd-daemon mode (no TTY).
+    button = ButtonListener(
+        gpio_pin=None if args.no_button else config.BUTTON_GPIO_PIN,
+        on_press=loop.on_user_action,
+    )
+    await button.start()
+    if button.available:
+        print(f"[button: ready on BCM {button.gpio_pin}]")
+    elif not args.no_button and config.BUTTON_GPIO_PIN is not None:
+        print(f"[button: disabled — {button.error}]")
+
     try:
         await asyncio.gather(
             loop.run(),
@@ -102,6 +119,8 @@ async def amain(args: argparse.Namespace) -> None:
         )
     except (KeyboardInterrupt, asyncio.CancelledError):
         print("\n[interrupted]")
+    finally:
+        await button.stop()
 
 
 def main() -> None:

@@ -4,7 +4,7 @@
 Usage:
     python bin/chat.py
     python bin/chat.py --voice Puck
-    python bin/chat.py --wake hey_jarvis
+    python bin/chat.py --wake alexa
     python bin/chat.py --skip-bt-check
 
 Wires up: bluetooth setup, mic, speaker, leds, live session, tools, memory,
@@ -38,8 +38,9 @@ def parse_args() -> argparse.Namespace:
                     help="TTS voice")
     ap.add_argument("--wake", default=None,
                     help=("Wake-word name (default OFF). "
-                          "Pre-trained options: hey_jarvis, alexa, hey_mycroft, hey_marvin, timer, weather. "
-                          "Specify the empty arg to enable with the configured default."))
+                          "Pre-trained options: alexa, hey_jarvis, hey_mycroft, hey_marvin, timer, weather. "
+                          "Specify the empty arg to enable with the configured default "
+                          f"({config.DEFAULT_WAKE_WORD})."))
     ap.add_argument("--wake-threshold", type=float, default=None,
                     help=(f"Wake detection threshold (0.0-1.0). Default {config.WAKE_WORD_THRESHOLD}. "
                           "Lower = more sensitive (more false positives). Try 0.3 if BT mic CVSD lowers scores."))

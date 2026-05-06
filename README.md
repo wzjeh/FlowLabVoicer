@@ -67,8 +67,8 @@ source .venv/bin/activate
 # voice conversation (default)
 python bin/chat.py
 
-# voice conversation with wake word
-python bin/chat.py --wake hey_jarvis
+# voice conversation with wake word (default: alexa)
+python bin/chat.py --wake alexa
 
 # pick a different TTS voice
 python bin/chat.py --voice Puck

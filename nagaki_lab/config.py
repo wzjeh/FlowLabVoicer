@@ -52,7 +52,12 @@ RECONNECT_BACKOFF_MAX_S = 30.0
 BT_HEADSET_NAME_SUBSTRING = "Baseus"
 
 # ---------- wake word ----------
-DEFAULT_WAKE_WORD = "hey_jarvis"
+# 'alexa' chosen over hey_jarvis: easier to pronounce in Mandarin (啊里克莎)
+# and Japanese (アレクサ — already in daily usage as a loanword), shipped
+# with the largest training corpus among the pre-trained models so its
+# false-positive rate is lowest. To switch back, just change this string;
+# any model in openwakeword's resources/models/ is selectable by name stem.
+DEFAULT_WAKE_WORD = "alexa"
 WAKE_WORD_THRESHOLD = 0.5
 WAKE_COOLDOWN_S = 1.5
 

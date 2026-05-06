@@ -1,14 +1,17 @@
 """Wake-word detector via OpenWakeWord (v0.4 API).
 
 Pre-trained wakewords shipped with the package: alexa, hey_jarvis,
-hey_mycroft, timer, weather. We default to `hey_jarvis` (Iron Man / JARVIS
-vibe, fits a chemistry lab). A custom "Nagaki" model is a future training
-task — when that .onnx is available, instantiate this class with
-`wakeword="nagaki"` and OpenWakeWord will load it via its filename match
-or you can pass the path directly via `model_path=`.
+hey_marvin, hey_mycroft, timer, weather. We default to `alexa` — chosen
+over hey_jarvis because it has the largest training corpus among the
+pre-trained models (lowest false-positive rate) and is easily pronounced
+in Mandarin (啊里克莎) and Japanese (アレクサ, an everyday loanword). A
+custom Chinese-native model (e.g. "小爱" / "永木") is a future training
+task — when that .onnx is available, instantiate this class with the
+appropriate `wakeword=` name (OpenWakeWord matches by filename stem) or
+pass an explicit path via `model_path=`.
 
 Usage:
-    detector = WakeWordDetector("hey_jarvis")
+    detector = WakeWordDetector("alexa")
     while ...:
         chunk_int16 = ...   # 50–100 ms of int16 mono audio at 16 kHz
         if detector.feed(chunk_int16):

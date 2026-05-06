@@ -58,13 +58,14 @@ BT_HEADSET_NAME_SUBSTRING = "Baseus"
 # false-positive rate is lowest. To switch back, just change this string;
 # any model in openwakeword's resources/models/ is selectable by name stem.
 DEFAULT_WAKE_WORD = "alexa"
-# Empirically: BT-headset CVSD (8 kHz wideband-mismatch) compresses the
-# wake-detector score range. Real "alexa" via this BT mic scored 0.62 –
-# 0.73 across observed sessions, while ambient lab noise tops out around
-# 0.57. 0.6 sits in the gap — catches all genuine wakes, rejects the
-# noise-floor false positives. Tune per environment: raise if it still
-# false-triggers; lower toward 0.55 if real wakes are missed.
-WAKE_WORD_THRESHOLD = 0.6
+# 0.65 with post-response mute (see ConversationLoop._set_state) gives
+# the cleanest UX: stricter than the original 0.5, comfortably above the
+# noise-floor 0.57, and the mute window covers the dominant remaining
+# false-positive source (model TTS tail echoing back through the BT mic).
+# Trade-off: very-marginal real wakes (~0.62 — borderline mumbles) will
+# miss; loud-clear "alexa" reliably scores 0.7+ even on CVSD. If you
+# personally tend to under-articulate, drop to 0.6.
+WAKE_WORD_THRESHOLD = 0.65
 WAKE_COOLDOWN_S = 1.5
 # Wake-mode captures that contain only background noise should NOT be
 # uploaded — they waste an API turn and let the model hallucinate a

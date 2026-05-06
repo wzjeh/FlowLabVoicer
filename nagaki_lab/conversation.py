@@ -150,12 +150,27 @@ class ConversationLoop:
 
     # ---------- state transitions ----------
     _BUSY_STATES = ("capturing", "responding")  # = (STATE_CAPTURING, STATE_RESPONDING)
+    POST_RESPONSE_WAKE_MUTE_S = 1.0   # cover speaker drain + BT mic latency
 
     async def _set_state(self, new_state: str) -> None:
         old = self._state
         if old == new_state:
             return
         self._state = new_state
+
+        # Post-response wake mute. The model's TTS tail keeps playing for
+        # ~hundreds of ms after we transition out of RESPONDING, and that
+        # audio echoes back into the BT mic — observed scoring 0.7-0.99
+        # against the alexa model. Mute the detector for a moment so it
+        # ignores that echo. Only fires on the RESPONDING -> WAKE_LISTENING
+        # edge; capture rejections (CAPTURING -> WAKE_LISTENING) don't
+        # trigger it because no audio was played.
+        if (old == self.STATE_RESPONDING
+                and new_state == self.STATE_WAKE_LISTENING
+                and self.wake_detector is not None):
+            self.wake_detector.mute_until(
+                time.monotonic() + self.POST_RESPONSE_WAKE_MUTE_S
+            )
 
         # Duck music whenever we transition into a "busy" state (mic capturing
         # OR model responding) and un-duck when returning to rest. This is the

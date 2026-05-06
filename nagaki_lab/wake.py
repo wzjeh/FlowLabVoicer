@@ -89,3 +89,14 @@ class WakeWordDetector:
             self._cooldown_until = time.monotonic() + self.cooldown_s
             return True
         return False
+
+    def mute_until(self, deadline_monotonic: float) -> None:
+        """Postpone the next possible detection until at least the given
+        monotonic timestamp. Chunks fed during the muted window still go
+        through the model so its internal state stays consistent — they
+        just can't fire a wake. Used by ConversationLoop to suppress
+        false triggers caused by the model's TTS tail echoing back into
+        the mic right after a response ends.
+        """
+        if deadline_monotonic > self._cooldown_until:
+            self._cooldown_until = deadline_monotonic

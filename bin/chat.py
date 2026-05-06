@@ -97,8 +97,6 @@ async def amain(args: argparse.Namespace) -> None:
 
     print(f"[session {loop.session_id} voice={args.voice} model={config.MODEL}]")
 
-    ui = TerminalUI(loop, turn_log)
-
     # Physical pushbutton input — same callback the keyboard ENTER triggers,
     # so it's a third input surface alongside ENTER and the wake word. The
     # only one of the three that survives systemd-daemon mode (no TTY).
@@ -112,11 +110,23 @@ async def amain(args: argparse.Namespace) -> None:
     elif not args.no_button and config.BUTTON_GPIO_PIN is not None:
         print(f"[button: disabled — {button.error}]")
 
+    # TerminalUI reads stdin for ENTER + slash commands, but only makes
+    # sense when stdin is an actual terminal. Under systemd-daemon mode
+    # stdin is /dev/null and readline() instantly returns EOF, which
+    # TerminalUI treats as `/exit` and shuts the whole process down.
+    # Detect that case and run loop-only; the wake word and the button
+    # are still functional input paths in daemon mode.
+    has_tty = sys.stdin.isatty()
+    ui = TerminalUI(loop, turn_log) if has_tty else None
+    if not has_tty:
+        print("[no TTY — running in daemon mode; "
+              "trigger via wake word or pushbutton]")
+
     try:
-        await asyncio.gather(
-            loop.run(),
-            ui.run(),
-        )
+        if ui is not None:
+            await asyncio.gather(loop.run(), ui.run())
+        else:
+            await loop.run()
     except (KeyboardInterrupt, asyncio.CancelledError):
         print("\n[interrupted]")
     finally:

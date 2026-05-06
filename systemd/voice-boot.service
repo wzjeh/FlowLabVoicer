@@ -1,13 +1,14 @@
 [Unit]
 Description=Voice Assistant Boot Greeter (LED + chime)
-After=network-online.target sound.target
-Wants=network-online.target
+# user-mode service — runs inside the user's systemd --user instance, so it
+# automatically inherits XDG_RUNTIME_DIR and the running PipeWire session.
+# Requires `loginctl enable-linger wyzhaoc` (one-time) so the user session
+# starts at boot regardless of console / SSH login.
+After=pipewire.socket pipewire.service sound.target
+Wants=pipewire.socket
 
 [Service]
 Type=oneshot
-User=wyzhaoc
-Group=wyzhaoc
-SupplementaryGroups=spi audio
 WorkingDirectory=/home/wyzhaoc/voice
 ExecStart=/home/wyzhaoc/voice/.venv/bin/python /home/wyzhaoc/voice/bin/boot_greeter.py
 RemainAfterExit=no
@@ -15,4 +16,4 @@ StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

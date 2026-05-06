@@ -169,7 +169,7 @@ All constants in one place. Key knobs:
 | **Wake mode (`--wake`) unstable** | Detection fires (score ≥ 0.3 with `--wake-threshold 0.3`) but server often does not reply on wake-driven turns. Cause unknown — possibly MicStream + send_realtime_input interaction. ENTER mode is the stable production path. |
 | **ReSpeaker HAT v2.0 mic** | Doesn't work on Trixie kernel 6.12 (codec ENXIO). Bluetooth mic is the workaround. |
 | **HAT v2.0 has no LEDs** | v1.0 had APA102 LEDs; v2.0 removed them. `voice_leds.py` driver kept for future external strip. |
-| **systemd auto-start** | Unit at `systemd/voice-boot.service` written but not installed. |
+| **systemd auto-start** | Installed and enabled as a **user-mode** unit. Plays a chime + sets LEDs to idle on every boot. Requires `loginctl enable-linger wyzhaoc` (set once) so the user systemd / PipeWire session is alive at boot — system-mode service can't reach PipeWire pre-login (`aplay: Host is down`). |
 | **Music + voice mix** | Music and model speech mix on the same speaker. No auto-pause yet. Workaround: say "stop music" before talking. |
 | **Custom "永木" wake word** | Pre-trained models include hey_jarvis / alexa / hey_mycroft / hey_marvin. Custom training (~30 min via OpenWakeWord) deferred. |
 | **Session-resumption handle lifetime** | Live API tokens expire after ~10–60 min. After that the next reconnect starts a fresh conversation. |
@@ -244,7 +244,7 @@ All constants in one place. Key knobs:
 │   └── test_mic.py                           BT mic loopback
 │
 └── systemd/
-    └── voice-boot.service                    not installed yet
+    └── voice-boot.service                    user-mode unit (install steps in README)
 ```
 
 ---

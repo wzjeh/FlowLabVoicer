@@ -55,7 +55,36 @@ voice/
 │   └── test_mic.py
 │
 └── systemd/
-    └── voice-boot.service
+    └── voice-boot.service                    # boot-time chime + LED greeter
+```
+
+## Boot-time greeter (systemd, user-mode)
+
+The unit at `systemd/voice-boot.service` plays a triple-beep through the USB
+speaker and sets LEDs to idle, confirming the device is alive after power-on.
+
+It's a **user-mode** systemd unit because the chime goes through PipeWire,
+which only runs inside a user session. Install once with:
+
+```bash
+# enable user systemd at boot regardless of console / SSH login
+sudo loginctl enable-linger $USER
+
+# install the unit and enable on boot
+mkdir -p ~/.config/systemd/user
+cp ~/voice/systemd/voice-boot.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now voice-boot.service
+
+# confirm
+systemctl --user status voice-boot.service
+```
+
+Run-time controls:
+```bash
+systemctl --user disable voice-boot.service     # turn off auto-start
+systemctl --user start voice-boot.service       # play the chime now
+journalctl --user-unit voice-boot.service -b    # this-boot logs
 ```
 
 ## How to run

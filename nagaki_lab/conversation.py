@@ -277,9 +277,14 @@ class ConversationLoop:
                             if self._needs_reconnect:
                                 # Trigger the outer reconnect path so we get a
                                 # clean session (preserves session_resumption
-                                # handle, so context survives).
+                                # handle, so context survives). The flag can
+                                # be set from several paths — abort, watchdog
+                                # idle, upload failure, recv error — each of
+                                # which prints its own reason just before
+                                # setting the flag, so the exception message
+                                # itself stays generic.
                                 raise ConnectionAbortedError(
-                                    "watchdog forced reconnect after server idle timeout"
+                                    "session reconnect requested"
                                 )
                         finally:
                             for t in (watch, wake_task):

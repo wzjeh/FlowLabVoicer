@@ -114,6 +114,14 @@ async def play_music(args: dict) -> dict:
 
     title = str(args.get("title") or DEFAULT_TITLE).strip() or DEFAULT_TITLE
 
+    # Default to looping forever — kitchen / lab background music is meant
+    # to keep going. The user can ask "play once" to disable, or "stop music".
+    loop_arg = args.get("loop", True)
+    if isinstance(loop_arg, str):
+        loop = loop_arg.strip().lower() not in ("false", "0", "no", "off", "")
+    else:
+        loop = bool(loop_arg)
+
     if not MUSIC_DIR.exists():
         return {
             "error": f"music directory does not exist yet: {MUSIC_DIR}. "
@@ -132,9 +140,16 @@ async def play_music(args: dict) -> dict:
     if _current_proc is not None and _current_proc.poll() is None:
         _stop_current()
 
+    # ffplay -loop 0 = infinite repeat. -loop 1 = play once.
+    # NB: -autoexit stays in either case so a one-shot play exits cleanly.
+    cmd = ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet"]
+    if loop:
+        cmd += ["-loop", "0"]
+    cmd.append(str(target))
+
     try:
         _current_proc = subprocess.Popen(
-            ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", str(target)],
+            cmd,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -148,8 +163,11 @@ async def play_music(args: dict) -> dict:
     return {
         "playing": target.stem,
         "file": str(target),
+        "looping": loop,
         "note": "playback started; will play through the USB speaker. "
-                "Tell the user briefly. They can ask to 'stop music' anytime.",
+                + ("Will loop until user asks to stop. "
+                   if loop else "Will play once and end. ")
+                + "Tell the user briefly. They can ask to 'stop music' anytime.",
     }
 
 
@@ -184,7 +202,9 @@ DECLARATIONS = [
             f"{MUSIC_DIR}. Default song is '{DEFAULT_TITLE}' if no title given. "
             "Matching is case-insensitive substring on the filename stem, so "
             "the user can ask for a partial title (e.g. '一笑' matches "
-            "'一笑江湖.mp3'). After calling, briefly tell the user what is "
+            "'一笑江湖.mp3'). By DEFAULT the track loops forever — only set "
+            "loop=false if the user explicitly says 'play once' / '只播一遍' / "
+            "'一回だけ'. After calling, briefly tell the user what is "
             "playing in their language."
         ),
         parameters=S(type=T.OBJECT,
@@ -192,6 +212,11 @@ DECLARATIONS = [
                          "title": S(type=T.STRING,
                                     description=f"Song title or part of it. "
                                                 f"Default: '{DEFAULT_TITLE}'."),
+                         "loop": S(type=T.BOOLEAN,
+                                   description="Whether to repeat the song "
+                                               "indefinitely. Default true. "
+                                               "Set false only when the user "
+                                               "asks for a single play."),
                      }),
     ),
     types.FunctionDeclaration(

@@ -91,6 +91,27 @@ def choose_hfp_index(profiles: list[tuple[int, str]]) -> Optional[tuple[int, str
     return None
 
 
+def _find_paired_mac_by_name(name_substring: str) -> Optional[str]:
+    """Look up the MAC of a paired BT device whose friendly name contains
+    the substring. Used to actively connect at boot when the headset
+    isn't yet visible to PipeWire."""
+    out = _run(["bluetoothctl", "devices", "Paired"])
+    for line in out.splitlines():
+        # Format: "Device XX:XX:XX:XX:XX:XX <name>"
+        parts = line.strip().split(maxsplit=2)
+        if len(parts) >= 3 and parts[0] == "Device" and name_substring in parts[2]:
+            return parts[1]
+    return None
+
+
+def _bt_connect(mac: str) -> bool:
+    """Try `bluetoothctl connect MAC`. Returns True on success or
+    'already connected'."""
+    out = _run(["bluetoothctl", "connect", mac], timeout=10.0)
+    out_l = out.lower()
+    return "connection successful" in out_l or "already connected" in out_l
+
+
 def has_active_hfp_source(name_substring: str) -> bool:
     """When HFP is active, wpctl status lists a real Source named after the
     headset. When inactive, only stub Filter-class nodes exist."""
@@ -118,40 +139,74 @@ def _set_profile(device_id: int, profile_index: int) -> bool:
 def ensure_hfp(
     name_substring: str = config.BT_HEADSET_NAME_SUBSTRING,
     verbose: bool = True,
+    timeout_s: float = 25.0,
 ) -> bool:
     """Ensure the named BT headset is in an HFP profile so its mic delivers
-    real audio. Returns True if HFP is active afterwards."""
-    if has_active_hfp_source(name_substring):
-        if verbose:
-            print(f"[bt] HFP source already active for {name_substring!r}")
-        return True
+    real audio.
 
-    dev_id = find_bt_device_id(name_substring)
-    if dev_id is None:
-        if verbose:
-            print(f"[bt] no bluez5 device matching {name_substring!r} — skipping HFP setup")
-        return False
+    On a freshly-booted Pi the headset may not yet be connected to bluez
+    when this runs (the user just powered it on, or auto-reconnect is
+    still racing). We retry up to ``timeout_s`` seconds, actively issuing
+    ``bluetoothctl connect <mac>`` if the device is paired but not yet
+    visible to PipeWire. Returns True once HFP is active.
+    """
+    deadline = time.monotonic() + timeout_s
+    connect_attempts = 0
+    last_log = ""
 
-    profiles = list_profiles(dev_id)
-    chosen = choose_hfp_index(profiles)
-    if chosen is None:
-        if verbose:
-            avail = ", ".join(name for _, name in profiles)
-            print(f"[bt] device {dev_id} has no HFP profile available. Profiles: {avail}")
-        return False
+    def _say(msg: str) -> None:
+        nonlocal last_log
+        if verbose and msg != last_log:
+            print(msg)
+            last_log = msg
 
-    idx, name = chosen
-    if verbose:
-        print(f"[bt] setting device {dev_id} -> profile {name!r} (index {idx})")
-    _set_profile(dev_id, idx)
-
-    for _ in range(10):
-        time.sleep(0.3)
+    while time.monotonic() < deadline:
         if has_active_hfp_source(name_substring):
-            if verbose:
-                print("[bt] HFP active.")
+            _say(f"[bt] HFP source already active for {name_substring!r}")
             return True
 
+        dev_id = find_bt_device_id(name_substring)
+        if dev_id is None:
+            # Not visible yet. Try to actively connect by MAC, then wait
+            # a moment for PipeWire to register the device.
+            mac = _find_paired_mac_by_name(name_substring)
+            if mac is None:
+                _say(f"[bt] no PAIRED device matching {name_substring!r} — "
+                     "pair via `bluetoothctl pair MAC` once before relying on "
+                     "auto-reconnect")
+                return False
+            connect_attempts += 1
+            _say(f"[bt] {name_substring!r} not yet visible to PipeWire; "
+                 f"connecting {mac} (attempt {connect_attempts})…")
+            _bt_connect(mac)
+            time.sleep(2.0)
+            continue
+
+        # Device visible — pick HFP profile and apply it
+        profiles = list_profiles(dev_id)
+        chosen = choose_hfp_index(profiles)
+        if chosen is None:
+            avail = ", ".join(name for _, name in profiles)
+            _say(f"[bt] device {dev_id} has no HFP profile available. "
+                 f"Profiles: {avail}")
+            return False
+
+        idx, name = chosen
+        _say(f"[bt] setting device {dev_id} -> profile {name!r} (index {idx})")
+        _set_profile(dev_id, idx)
+
+        for _ in range(10):
+            time.sleep(0.3)
+            if has_active_hfp_source(name_substring):
+                _say("[bt] HFP active.")
+                return True
+
+        # Profile request didn't take — fall through to retry the loop;
+        # sometimes pw-cli accepts the param but PipeWire takes a moment
+        # to expose the new Source node.
+        time.sleep(1.0)
+
     if verbose:
-        print("[bt] profile request sent but HFP source not yet visible.")
+        print(f"[bt] HFP setup gave up after {timeout_s:.0f}s — "
+              f"is the headset powered on and within range?")
     return False

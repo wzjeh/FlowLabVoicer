@@ -24,7 +24,11 @@ StartLimitIntervalSec=60s
 [Service]
 Type=simple
 WorkingDirectory=/home/wyzhaoc/voice
-ExecStart=/home/wyzhaoc/voice/.venv/bin/python /home/wyzhaoc/voice/bin/chat.py --wake alexa --quiet
+# python -u  =>  unbuffered stdout/stderr, so journal shows lines as
+# they're printed instead of waiting for the buffer to fill (Python
+# uses block-buffering when stdout isn't a TTY, which under systemd
+# means "no log output until the process exits or buffer fills 4KB").
+ExecStart=/home/wyzhaoc/voice/.venv/bin/python -u /home/wyzhaoc/voice/bin/chat.py --wake alexa --quiet
 # A clean restart on crash (network blip, model 1011, etc). Wait 3 s
 # between attempts so we don't tight-loop on a permanent failure.
 Restart=on-failure

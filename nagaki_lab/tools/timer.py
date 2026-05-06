@@ -41,15 +41,32 @@ _BEEP = _make_beep_pcm()
 _GAP = b"\x00\x00" * int(config.OUTPUT_RATE * 0.15)
 _BEEP_SEQ = (_BEEP + _GAP) * 3
 
+# Short, higher-pitched single tick for wake-word acknowledgement —
+# distinct from the timer's 880 Hz triple-beep so the user can tell them
+# apart by ear. Used by ConversationLoop._on_wake_detected.
+_TICK = _make_beep_pcm(freq=1320.0, duration=0.12, gain=0.30)
 
-def play_beep_blocking() -> None:
-    """Play the triple beep synchronously."""
+
+def _aplay_pcm_blocking(pcm: bytes) -> None:
+    """Pipe a raw PCM blob through aplay synchronously, swallowing aplay's
+    underrun / overrun stderr chatter that otherwise spams the console."""
     proc = subprocess.Popen(
         ["aplay", "-D", config.SPEAKER_DEVICE, "-q",
          "-r", str(config.OUTPUT_RATE), "-c", "1", "-f", "S16_LE", "-t", "raw"],
         stdin=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
     )
-    proc.communicate(_BEEP_SEQ)
+    proc.communicate(pcm)
+
+
+def play_beep_blocking() -> None:
+    """Play the triple beep synchronously (timer expiry)."""
+    _aplay_pcm_blocking(_BEEP_SEQ)
+
+
+def play_tick_blocking() -> None:
+    """Play a single short higher-pitch tick (wake-word ack)."""
+    _aplay_pcm_blocking(_TICK)
 
 
 # ---------- timer registry ----------

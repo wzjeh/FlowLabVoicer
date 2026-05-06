@@ -58,8 +58,20 @@ BT_HEADSET_NAME_SUBSTRING = "Baseus"
 # false-positive rate is lowest. To switch back, just change this string;
 # any model in openwakeword's resources/models/ is selectable by name stem.
 DEFAULT_WAKE_WORD = "alexa"
-WAKE_WORD_THRESHOLD = 0.5
+# 0.65 instead of 0.5: at 0.5 the lab fans / ambient noise repeatedly
+# clear the bar with scores like 0.57 (observed false positives), while
+# real "alexa" utterances tend to score 0.7+. 0.65 cuts ~90% of false
+# positives without hurting genuine wakes. Lower if your environment is
+# quieter; raise toward 0.75 if false positives still bother you.
+WAKE_WORD_THRESHOLD = 0.65
 WAKE_COOLDOWN_S = 1.5
+# Wake-mode captures that contain only background noise should NOT be
+# uploaded — they waste an API turn and let the model hallucinate a
+# response to garbage. Real speech via the BT headset reads RMS 8000+;
+# fans / keyboard noise reads <3000. 4000 is a comfortable gate.
+# (ENTER-mode capture stays gated by MIN_PEAK_RMS=150, very permissive,
+# because the user explicitly pressed the key.)
+WAKE_MIN_PEAK_RMS = 4000.0
 
 # ---------- LEDs (APA102 on SPI) ----------
 LED_NUM_PIXELS = 3

@@ -39,7 +39,7 @@ from .tools.music import (
     pause_current as _music_pause,
     resume_current as _music_resume,
 )
-from .tools.timer import play_beep_blocking
+from .tools.timer import play_beep_blocking, play_tick_blocking
 from .wake import WakeWordDetector
 from google.genai import types
 
@@ -332,8 +332,20 @@ class ConversationLoop:
             print(f"  [too short ({duration:.2f}s) — press ENTER and speak again]")
             await self._return_to_resting_state()
             return
-        if peak < config.MIN_PEAK_RMS:
-            print(f"  [no speech detected (peak RMS {peak:.0f}) — speak louder/closer]")
+        # Stricter RMS gate for wake-driven captures: a false-positive wake
+        # almost always grabs ambient noise, and uploading that wastes an
+        # API turn AND lets the model hallucinate a response to garbage.
+        # ENTER-mode stays gated by the very-permissive MIN_PEAK_RMS because
+        # the user explicitly initiated the capture.
+        wake_driven = auto and self.wake_detector is not None
+        min_rms = config.WAKE_MIN_PEAK_RMS if wake_driven else config.MIN_PEAK_RMS
+        if peak < min_rms:
+            if wake_driven:
+                print(f"  [wake-capture too quiet (peak RMS {peak:.0f} < "
+                      f"{min_rms:.0f}) — likely false trigger, ignoring]")
+            else:
+                print(f"  [no speech detected (peak RMS {peak:.0f}) — "
+                      "speak louder/closer]")
             await self._return_to_resting_state()
             return
 
@@ -612,8 +624,11 @@ class ConversationLoop:
 
     @staticmethod
     def _chime() -> None:
+        # Short higher-pitched single tick — distinct from the timer's
+        # 880 Hz triple beep, so the user can tell wake-ack from timer-fire
+        # by ear alone.
         try:
-            play_beep_blocking()
+            play_tick_blocking()
         except Exception:
             pass
 

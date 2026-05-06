@@ -47,11 +47,17 @@ class SpeakerPlayback:
         return self._proc is not None and self._proc.poll() is None
 
     def _open_proc(self) -> None:
+        # aplay still prints "underrun!!! ..." and similar non-fatal warnings
+        # to stderr even with -q. Those underruns happen routinely when the
+        # network stalls a chunk and don't mean playback failed; redirect to
+        # /dev/null so the chat console stays clean. (If you ever need to
+        # debug audio, replace DEVNULL with subprocess.PIPE temporarily.)
         self._proc = subprocess.Popen(
             ["aplay", "-D", self.device, "-q",
              "-r", str(self.sample_rate), "-c", str(self.channels),
              "-f", "S16_LE", "-t", "raw"],
             stdin=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
         )
 
     def _write_raw(self, pcm: bytes) -> None:

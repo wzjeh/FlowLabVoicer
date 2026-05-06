@@ -14,6 +14,12 @@ Wants=pipewire.socket
 # Only start after the chime greeter has finished, so the chime isn't
 # masked by the chat startup banner / wake-word ack.
 Requires=voice-boot.service
+# Burst limit: at most 5 restarts in 60 s; if it keeps crashing past
+# that, leave it stopped so we can investigate manually. (StartLimit*
+# directives belong in [Unit], not [Service] — modern systemd warns
+# about misplacement.)
+StartLimitBurst=5
+StartLimitIntervalSec=60s
 
 [Service]
 Type=simple
@@ -23,10 +29,6 @@ ExecStart=/home/wyzhaoc/voice/.venv/bin/python /home/wyzhaoc/voice/bin/chat.py -
 # between attempts so we don't tight-loop on a permanent failure.
 Restart=on-failure
 RestartSec=3s
-# Burst limit: at most 5 restarts in 60 s; if it keeps crashing past
-# that, leave it stopped so we can investigate manually.
-StartLimitBurst=5
-StartLimitIntervalSec=60s
 StandardOutput=journal
 StandardError=journal
 

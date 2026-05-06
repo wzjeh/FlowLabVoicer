@@ -432,8 +432,7 @@ class ConversationLoop:
         self._t_mark("user_abort")
         self._abort_flag = True
         self.speaker.abort()
-        # The receive task will exit naturally (it sees abort_flag and drains
-        # until turn_complete, OR we cancel it if it's stuck).
+        # Cancel the receive task to stop dispatching events to handlers.
         if self._turn_task is not None and not self._turn_task.done():
             self._turn_task.cancel()
             try:
@@ -441,9 +440,21 @@ class ConversationLoop:
             except (asyncio.CancelledError, Exception):
                 pass
             self._turn_task = None
+        # Crucial: force a session reconnect. Cancelling the receive
+        # generator does NOT stop the server from continuing to generate
+        # audio for the aborted turn; the leftover audio chunks and the
+        # eventual TurnComplete sit in the SDK's websocket buffer. The
+        # next session.receive() call drains that stale TurnComplete
+        # first and exits immediately — making the next user turn appear
+        # to "complete instantly" with no model reply, and shortly after
+        # the server kills the websocket with 1011 keepalive timeout
+        # because nothing is consuming its frames.
+        # session_resumption preserves the conversation context across
+        # the reconnect, so the user-visible cost is sub-second.
+        self._needs_reconnect = True
         await self._return_to_resting_state()
         if self.verbose:
-            print("  [interrupted — back to idle]")
+            print("  [interrupted — reconnecting session for clean state]")
 
     async def _return_to_resting_state(self) -> None:
         self._last_server_activity = None

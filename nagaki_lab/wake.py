@@ -78,13 +78,18 @@ class WakeWordDetector:
 
     def feed(self, chunk_int16: np.ndarray) -> bool:
         """Returns True only on the rising edge of a detection."""
-        if time.monotonic() < self._cooldown_until:
-            # keep model state fresh during cooldown so it doesn't double-trigger
-            self.model.predict(chunk_int16)
-            return False
+        # Always run the model and refresh last_score, even when muted /
+        # in cooldown — otherwise self.last_score gets frozen at whatever
+        # value triggered the last wake and the dispatcher's monitoring
+        # log shows stale "score = 0.71" lines for the whole mute window
+        # (looks like a stuck score; actually the detector is fine, just
+        # not reporting current numbers). The fire decision is then a
+        # separate check below.
         scores = self.model.predict(chunk_int16)
         score = float(scores.get(self._model_key, 0.0))
         self.last_score = score
+        if time.monotonic() < self._cooldown_until:
+            return False
         if score >= self.threshold:
             self._cooldown_until = time.monotonic() + self.cooldown_s
             return True

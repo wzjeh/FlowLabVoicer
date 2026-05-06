@@ -113,6 +113,12 @@ class ConversationLoop:
         self._wake_capture_started_at: Optional[float] = None
         self._wake_recent_rms: list[float] = []   # rolling window for silence detect
         self._wake_chunks_remaining: int = 0      # how many chunks to discard right after wake
+        # Distinguishes "wake-fired capture" from "user pressed ENTER as
+        # fallback in wake mode". Wake-fired captures get auto-end-on-silence
+        # AND a strict RMS gate to discard false-trigger garbage. ENTER-fired
+        # captures don't — the user is explicitly initiating, so we wait for
+        # ENTER to end and accept whatever they recorded.
+        self._capture_was_wake_driven: bool = False
 
     # tunables for wake-driven auto-end-of-capture
     WAKE_CAPTURE_MAX_S = 15.0       # hard cap on auto capture
@@ -291,11 +297,19 @@ class ConversationLoop:
 
     # ---------- capture ----------
     async def _start_capture(self) -> None:
-        """Begin a capture turn. In non-wake mode this opens MicCapture; in
-        wake mode the dispatcher loop is already producing chunks and we just
-        flip a flag so it starts buffering them."""
+        """Begin a capture turn from a manual ENTER press. In non-wake mode
+        this opens MicCapture; in wake mode the dispatcher loop is already
+        producing chunks and we flip a flag so it starts buffering them.
+
+        Note: wake-triggered capture is started inside _on_wake_detected
+        instead — that path sets _capture_was_wake_driven=True so the
+        dispatcher's silence detector arms.
+        """
         self._t0 = None
         self._t_mark("capture_start")
+        # ENTER-triggered: user must end manually (or hit MAX_CAPTURE_SECONDS).
+        # The wake dispatcher's auto-silence-end is suppressed for this turn.
+        self._capture_was_wake_driven = False
         await self._set_state(self.STATE_CAPTURING)
         if self.wake_detector is None:
             await self.mic.start()
@@ -335,12 +349,15 @@ class ConversationLoop:
         # Stricter RMS gate for wake-driven captures: a false-positive wake
         # almost always grabs ambient noise, and uploading that wastes an
         # API turn AND lets the model hallucinate a response to garbage.
-        # ENTER-mode stays gated by the very-permissive MIN_PEAK_RMS because
-        # the user explicitly initiated the capture.
-        wake_driven = auto and self.wake_detector is not None
-        min_rms = config.WAKE_MIN_PEAK_RMS if wake_driven else config.MIN_PEAK_RMS
+        # ENTER-driven captures (whether ended manually OR by the 60s
+        # watchdog) stay on the very-permissive MIN_PEAK_RMS because the
+        # user explicitly initiated the capture.
+        if self._capture_was_wake_driven:
+            min_rms = config.WAKE_MIN_PEAK_RMS
+        else:
+            min_rms = config.MIN_PEAK_RMS
         if peak < min_rms:
-            if wake_driven:
+            if self._capture_was_wake_driven:
                 print(f"  [wake-capture too quiet (peak RMS {peak:.0f} < "
                       f"{min_rms:.0f}) — likely false trigger, ignoring]")
             else:
@@ -611,6 +628,8 @@ class ConversationLoop:
         # utterance itself does not bleed into the audio sent to the model.
         self._t0 = None
         self._t_mark("capture_start (wake-driven)")
+        # wake-driven: silence detector + strict RMS gate active.
+        self._capture_was_wake_driven = True
         await self._set_state(self.STATE_CAPTURING)
         self._wake_capture_buf = bytearray()
         self._wake_capture_peak = 0.0
@@ -649,6 +668,12 @@ class ConversationLoop:
                                 / config.INPUT_BLOCK_MS))
         if len(self._wake_recent_rms) > max_window:
             self._wake_recent_rms.pop(0)
+
+        # ENTER-triggered captures (in wake mode) just buffer chunks here —
+        # the user is responsible for pressing ENTER again to end. The hard
+        # cap and silence-auto-end below are wake-fired-only.
+        if not self._capture_was_wake_driven:
+            return
 
         elapsed = time.monotonic() - (self._wake_capture_started_at or time.monotonic())
 

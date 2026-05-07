@@ -131,6 +131,18 @@ class ConversationLoop:
     def state(self) -> str:
         return self._state
 
+    def _request_reconnect(self, reason: str) -> None:
+        """Centralised place to flag a reconnect, with an always-printed
+        reason. Replaces ``self._needs_reconnect = True`` everywhere so
+        we never get a silent reconnect — debugging cascading disconnects
+        is impossible without seeing what triggered the first one,
+        especially in --quiet mode where most per-event prints are gated.
+        Idempotent: only prints once per request, even if called multiple
+        times before the run() loop notices."""
+        if not self._needs_reconnect:
+            print(f"  [reconnect requested: {reason}]")
+        self._needs_reconnect = True
+
     @property
     def is_busy(self) -> bool:
         return self._state in (self.STATE_CAPTURING, self.STATE_RESPONDING)
@@ -224,10 +236,9 @@ class ConversationLoop:
         except (KeyboardInterrupt, asyncio.CancelledError):
             raise
         except Exception as e:
-            print(f"\n[conversation error in user action: "
-                  f"{type(e).__name__}: {e}]")
             self.speaker.abort()
-            self._needs_reconnect = True
+            self._request_reconnect(f"conversation error in user action: "
+                                    f"{type(e).__name__}: {e}")
             try:
                 await self._return_to_resting_state()
             except Exception:
@@ -451,8 +462,7 @@ class ConversationLoop:
             # websocket-level failure during the upload burst. Don't crash —
             # flag the session for reconnect and return to a clean idle state.
             self._t_mark(f"upload FAILED: {type(e).__name__}: {e}")
-            print(f"  [upload failed; will reconnect session]")
-            self._needs_reconnect = True
+            self._request_reconnect(f"upload failed: {type(e).__name__}: {e}")
             await self._return_to_resting_state()
             return
         if self.verbose:
@@ -485,10 +495,8 @@ class ConversationLoop:
         # because nothing is consuming its frames.
         # session_resumption preserves the conversation context across
         # the reconnect, so the user-visible cost is sub-second.
-        self._needs_reconnect = True
+        self._request_reconnect("user abort — flushing stale server events")
         await self._return_to_resting_state()
-        if self.verbose:
-            print("  [interrupted — reconnecting session for clean state]")
 
     async def _return_to_resting_state(self) -> None:
         self._last_server_activity = None
@@ -576,10 +584,10 @@ class ConversationLoop:
         # Most common: 1008 policy violation, 1011 keepalive timeout. The
         # main run() loop polls _needs_reconnect every 200 ms and triggers
         # a clean reconnect via session_resumption.
-        print(f"\n[recv error: {type(ev.exception).__name__}: {ev.exception}]")
-        print("[server dropped — auto-reconnecting in <1s, next turn will resume]")
         self.speaker.abort()
-        self._needs_reconnect = True
+        self._request_reconnect(
+            f"recv error: {type(ev.exception).__name__}: {ev.exception}"
+        )
 
     async def _handle_tool_calls(self, function_calls: list) -> None:
         """Dispatch each tool call with a hard timeout. If a tool hangs (slow
@@ -794,7 +802,9 @@ class ConversationLoop:
                     await self._return_to_resting_state()
                     # Signal the main run() loop to drop this websocket and
                     # reconnect. The session_resumption handle is preserved.
-                    self._needs_reconnect = True
+                    self._request_reconnect(
+                        f"watchdog: server idle {idle_for:.0f}s during RESPONDING"
+                    )
                     return
         except asyncio.CancelledError:
             raise

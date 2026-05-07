@@ -17,9 +17,23 @@ API:
 from __future__ import annotations
 
 import subprocess
+import threading
 from typing import Optional
 
 from .. import config
+
+
+def _reap_in_thread(proc: subprocess.Popen) -> None:
+    """Wait on a subprocess in a daemon thread so the caller doesn't
+    block. Used by close() so the conversation event loop can return
+    to IDLE while aplay quietly finishes draining its remaining
+    buffered samples (up to several hundred ms of model TTS tail)."""
+    def _drain() -> None:
+        try:
+            proc.wait(timeout=10.0)
+        except Exception:
+            pass
+    threading.Thread(target=_drain, daemon=True).start()
 
 
 class SpeakerPlayback:
@@ -83,25 +97,38 @@ class SpeakerPlayback:
         self._write_raw(pcm)
 
     def close(self) -> None:
-        """Close stdin and wait for aplay to drain. If the response was so
-        short that we never hit the prebuffer threshold, open aplay just to
-        play the remaining buffer."""
+        """Initiate close: signal stdin EOF so aplay knows there's no more
+        audio coming, then return IMMEDIATELY. aplay finishes playing its
+        remaining buffered samples and exits on its own; a daemon thread
+        reaps it so we don't accumulate zombies.
+
+        Why non-blocking: previously this awaited aplay's full drain
+        (up to several seconds for the TTS tail). During that wait the
+        ConversationLoop kept its state at RESPONDING, so any user
+        interaction in the drain window — pressing the button right after
+        the model said "...完。" — was interpreted as an abort instead of
+        the start of a new turn, triggering a session reconnect every
+        time. With non-blocking close the state advances to IDLE/
+        WAKE_LISTENING within milliseconds of turn_complete and the
+        button/wake behaviour matches the user's intuition.
+
+        If the response was so short that we never hit the prebuffer
+        threshold, open aplay just to play the remaining buffer.
+        """
         if self._proc is None and self._prebuffer:
             self._open_proc()
             self._write_raw(bytes(self._prebuffer))
             self._prebuffer.clear()
         if self._proc is None:
             return
+        proc = self._proc
+        self._proc = None       # release ownership; new write() opens fresh aplay
         try:
-            if self._proc.stdin is not None:
-                self._proc.stdin.close()
+            if proc.stdin is not None:
+                proc.stdin.close()
         except Exception:
             pass
-        try:
-            self._proc.wait(timeout=10.0)
-        except Exception:
-            pass
-        self._proc = None
+        _reap_in_thread(proc)
 
     def abort(self) -> None:
         """Kill aplay immediately. Drop any pending prebuffer (user wants silence now)."""

@@ -256,6 +256,7 @@ class ConversationLoop:
         await self.leds.set_state("idle")
 
         backoff = config.RECONNECT_BACKOFF_INITIAL_S
+        consecutive_failures = 0
         try:
             while not self._exit:
                 try:
@@ -266,6 +267,7 @@ class ConversationLoop:
                         backoff = config.RECONNECT_BACKOFF_INITIAL_S
 
                         self._needs_reconnect = False
+                        consecutive_failures = 0   # we got connected, reset
                         watch = asyncio.create_task(self._watchdog_loop())
                         wake_task = None
                         if self.wake_detector is not None:
@@ -305,9 +307,36 @@ class ConversationLoop:
                 except (KeyboardInterrupt, asyncio.CancelledError):
                     raise
                 except Exception as e:
-                    print(f"\n[disconnected: {type(e).__name__}: {e}]")
+                    consecutive_failures += 1
+                    err_str = f"{type(e).__name__}: {e}"
+                    print(f"\n[disconnected: {err_str}]")
                     if self._state in (self.STATE_CAPTURING, self.STATE_RESPONDING):
                         await self._set_state(self.STATE_IDLE)
+
+                    # Live API session_resumption handles expire (~24 h).
+                    # Once expired the server returns 1008 "session not
+                    # found" forever as long as we keep resuming with the
+                    # same handle. Detect that case and drop the handle
+                    # so the next attempt starts a fresh session. Same
+                    # safety net kicks in after 3 consecutive failures of
+                    # any kind, in case the SDK reports the staleness in
+                    # some other shape.
+                    err_low = err_str.lower()
+                    handle_stale = (
+                        "1008" in err_low
+                        or "session not found" in err_low
+                        or "bidigeneratecontent session" in err_low
+                    )
+                    if (handle_stale or consecutive_failures >= 3) \
+                            and self.live.handle is not None:
+                        print("[handle appears stale — clearing it; "
+                              "next reconnect will open a fresh session "
+                              "(in-memory turn log preserved, server "
+                              "context dropped)]")
+                        self.live.handle = None
+                        consecutive_failures = 0
+                        backoff = config.RECONNECT_BACKOFF_INITIAL_S
+
                     print(f"[reconnecting in {backoff:.1f}s — Ctrl+C to give up]")
                     await asyncio.sleep(backoff)
                     backoff = min(backoff * 2, config.RECONNECT_BACKOFF_MAX_S)

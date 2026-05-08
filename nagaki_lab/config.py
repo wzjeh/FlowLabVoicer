@@ -69,11 +69,20 @@ WAKE_WORD_THRESHOLD = 0.65
 WAKE_COOLDOWN_S = 1.5
 # Wake-mode captures that contain only background noise should NOT be
 # uploaded — they waste an API turn and let the model hallucinate a
-# response to garbage. Real speech via the BT headset reads RMS 8000+;
-# fans / keyboard noise reads <3000. 4000 is a comfortable gate.
-# (ENTER-mode capture stays gated by MIN_PEAK_RMS=150, very permissive,
-# because the user explicitly pressed the key.)
-WAKE_MIN_PEAK_RMS = 4000.0
+# response to garbage. Threshold needs to sit between "real speech"
+# and "ambient noise / model TTS tail echo" peaks.
+#
+# Calibration data:
+#   BT headset (CVSD 8 kHz):    real speech 8000-15000, noise <3000
+#   USB mic (AB13X 16 kHz):     real speech 2000-4000,  noise/echo <300
+#
+# 1500 sits cleanly in the gap for the USB mic (covers speech, rejects
+# echoes / silent OWW false-positives) and is still safe for BT (real
+# speech easily clears it). If you swap to a louder mic later you can
+# raise this; if speech keeps getting rejected lower it.
+# ENTER-mode capture stays gated by the very-permissive MIN_PEAK_RMS
+# below because the user explicitly pressed the key.
+WAKE_MIN_PEAK_RMS = 1500.0
 
 # ---------- LEDs (APA102 on SPI) ----------
 LED_NUM_PIXELS = 3

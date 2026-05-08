@@ -72,17 +72,24 @@ WAKE_COOLDOWN_S = 1.5
 # response to garbage. Threshold needs to sit between "real speech"
 # and "ambient noise / model TTS tail echo" peaks.
 #
-# Calibration data:
-#   BT headset (CVSD 8 kHz):    real speech 8000-15000, noise <3000
-#   USB mic (AB13X 16 kHz):     real speech 2000-4000,  noise/echo <300
+# Calibration data (peak RMS observed in real sessions):
+#   BT headset (CVSD 8 kHz):     real speech 8000-15000, noise <3000
+#   USB mic AB13X (16 kHz):      real speech  800- 4000, echo  <300
 #
-# 1500 sits cleanly in the gap for the USB mic (covers speech, rejects
-# echoes / silent OWW false-positives) and is still safe for BT (real
-# speech easily clears it). If you swap to a louder mic later you can
-# raise this; if speech keeps getting rejected lower it.
+# AB13X is significantly less sensitive than the BT mic, AND the wake
+# capture path drops the first 500 ms (the "alexa" word itself) so the
+# capture peak reflects only what came AFTER the wake — typically the
+# follow-on question, which a user usually says quieter than the wake
+# word. Observed real captures: 822 / 1042 / 2585 / 3971. Background:
+# <800 peak, model TTS tail echo: <200.
+#
+# 500 catches all real wake-driven captures with margin while still
+# rejecting OWW's silent false-positives and post-response echoes.
+# OWW score gate (>0.65) and the server-side STT provide additional
+# layers, so this gate doesn't have to be the only filter.
 # ENTER-mode capture stays gated by the very-permissive MIN_PEAK_RMS
 # below because the user explicitly pressed the key.
-WAKE_MIN_PEAK_RMS = 1500.0
+WAKE_MIN_PEAK_RMS = 500.0
 
 # ---------- LEDs (APA102 on SPI) ----------
 LED_NUM_PIXELS = 3

@@ -28,7 +28,11 @@ WorkingDirectory=/home/wyzhaoc/voice
 # they're printed instead of waiting for the buffer to fill (Python
 # uses block-buffering when stdout isn't a TTY, which under systemd
 # means "no log output until the process exits or buffer fills 4KB").
-ExecStart=/home/wyzhaoc/voice/.venv/bin/python -u /home/wyzhaoc/voice/bin/chat.py --wake alexa --quiet
+# --skip-bt-check now that the input mic is a USB device. Without this
+# flag, ensure_hfp wastes ~25s at startup actively trying to connect
+# the (now-removed) BT headset. Re-enable BT support by removing the
+# flag if you ever switch the mic back.
+ExecStart=/home/wyzhaoc/voice/.venv/bin/python -u /home/wyzhaoc/voice/bin/chat.py --wake alexa --quiet --skip-bt-check
 # A clean restart on crash (network blip, model 1011, etc). Wait 3 s
 # between attempts so we don't tight-loop on a permanent failure.
 Restart=on-failure

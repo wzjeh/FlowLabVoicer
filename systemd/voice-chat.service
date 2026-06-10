@@ -6,37 +6,46 @@ Description=Nagaki Lab voice assistant (chat in wake mode)
 # `loginctl enable-linger wyzhaoc` (one-time) so the user's systemd
 # instance starts at boot regardless of console / SSH login.
 #
-# Long-running, auto-restart on crash. Wake word (alexa) and the GPIO
-# pushbutton are the two input paths that work without a TTY; the
-# keyboard-ENTER path is unavailable in daemon mode (stdin = /dev/null).
+# Long-running, auto-restart on crash AND on hang (watchdog). Wake word
+# (alexa) and the GPIO pushbutton are the two input paths that work
+# without a TTY; the keyboard-ENTER path is unavailable in daemon mode.
 After=pipewire.socket pipewire.service sound.target voice-boot.service
 Wants=pipewire.socket
 # Only start after the chime greeter has finished, so the chime isn't
 # masked by the chat startup banner / wake-word ack.
 Requires=voice-boot.service
-# Burst limit: at most 5 restarts in 60 s; if it keeps crashing past
-# that, leave it stopped so we can investigate manually. (StartLimit*
-# directives belong in [Unit], not [Service] — modern systemd warns
-# about misplacement.)
-StartLimitBurst=5
-StartLimitIntervalSec=60s
+# Allow plenty of restarts before giving up: watchdog/OOM restarts are
+# legitimate self-healing, not a crash loop. 10 restarts inside 10
+# minutes is the line between "recovering" and "broken — stop and let a
+# human look".
+StartLimitBurst=10
+StartLimitIntervalSec=600
 
 [Service]
-Type=simple
+# Type=notify: the app signals READY=1 via sd_notify (nagaki_lab/sdnotify.py)
+# and then pings WATCHDOG=1 from its main loop. If pings stop for
+# WatchdogSec, systemd kills and restarts the service. This is the net
+# under every hang class we can't foresee — the 2026-06-09 incident
+# (reconnect wedged inside an untimeouted websocket connect for 20 h,
+# device unresponsive until OOM-killed) becomes a 5-minute blip.
+Type=notify
+WatchdogSec=300
 WorkingDirectory=/home/wyzhaoc/voice
 # python -u  =>  unbuffered stdout/stderr, so journal shows lines as
 # they're printed instead of waiting for the buffer to fill (Python
-# uses block-buffering when stdout isn't a TTY, which under systemd
-# means "no log output until the process exits or buffer fills 4KB").
-# --skip-bt-check now that the input mic is a USB device. Without this
-# flag, ensure_hfp wastes ~25s at startup actively trying to connect
-# the (now-removed) BT headset. Re-enable BT support by removing the
-# flag if you ever switch the mic back.
+# uses block-buffering when stdout isn't a TTY).
+# --skip-bt-check: the mic is a USB device now. Without the flag,
+# ensure_hfp wastes ~25s at startup retrying the absent BT headset.
 ExecStart=/home/wyzhaoc/voice/.venv/bin/python -u /home/wyzhaoc/voice/bin/chat.py --wake alexa --quiet --skip-bt-check
-# A clean restart on crash (network blip, model 1011, etc). Wait 3 s
-# between attempts so we don't tight-loop on a permanent failure.
-Restart=on-failure
-RestartSec=3s
+# Restart on ANY exit — crash, watchdog kill, OOM kill, or clean exit.
+# An appliance should never stay down.
+Restart=always
+RestartSec=5
+# Contain the known slow leak (~12 MB/day, RSS 283 MB healthy -> 583 MB
+# at OOM after 25 days). Hitting this cap kills only this unit (clean
+# restart) instead of letting the kernel's global OOM killer pick a
+# victim. [health] log lines track the trend for root-causing later.
+MemoryMax=800M
 StandardOutput=journal
 StandardError=journal
 

@@ -117,6 +117,41 @@ journalctl --user-unit voice-chat.service -b -n50  # last 50 from this boot
 In daemon (no-TTY) mode, ENTER is unreachable; trigger conversation via
 the wake word ("alexa, ...") or the GPIO pushbutton instead.
 
+## Maintenance / self-healing
+
+Three layers keep the device alive unattended (added after the
+2026-06-09 incident, where an untimeouted websocket connect hung the
+process for 20 hours until the kernel OOM-killed it):
+
+1. **I/O timeouts** — every Live-API connect (30 s), close (10 s) and
+   send (10 s) is time-bounded (`config.CONNECT_TIMEOUT_S` etc.), so the
+   reconnect loop always makes progress. Receive-side stalls are covered
+   by the existing 25 s server-idle watchdog.
+2. **systemd watchdog** — `Type=notify` + `WatchdogSec=300`. The main
+   loop pings WATCHDOG=1 every 30 s (`nagaki_lab/sdnotify.py`); any hang
+   class we didn't foresee gets killed + restarted within 5 minutes.
+3. **MemoryMax=800M** — contains the known slow leak (~12 MB/day);
+   hitting the cap restarts only this unit instead of inviting the
+   kernel's global OOM killer.
+
+When the assistant "feels broken", run the health report first:
+
+```bash
+.venv/bin/python bin/health.py            # last 24 h
+.venv/bin/python bin/health.py --days 7   # weekly review
+```
+
+It aggregates service state, temperature, event counts (wakes, RMS
+accept/reject, turns, reconnects), the hourly `[health]` RSS trend, and
+the most recent error lines.
+
+Monthly: glance at the health output for (a) RSS slope — if MemoryMax
+restarts become frequent, root-cause the leak; (b) `capture-rms`
+acceptance rate — recalibrate `WAKE_MIN_PEAK_RMS` if real speech is
+being rejected (calibration history lives in `config.py`); (c) reconnect
+count — if 1011 upload failures eat questions often, revisit the
+deferred upload-retry design.
+
 ## How to run
 
 ```bash

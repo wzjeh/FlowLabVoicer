@@ -48,6 +48,23 @@ UPLOAD_CHUNK_BYTES = 4096         # bytes per send_realtime_input call
 RECONNECT_BACKOFF_INITIAL_S = 1.0
 RECONNECT_BACKOFF_MAX_S = 30.0
 
+# ---------- websocket I/O timeouts ----------
+# Every network call in LiveSession must be time-bounded. Incident that
+# motivated this (2026-06-09): during a Gemini-side 1011 outage, a
+# reconnect attempt hung inside client.aio.live.connect() with no
+# timeout. The run() loop blocked there for 20 HOURS — wake dispatcher
+# and watchdog were already cancelled, so the device looked alive
+# (service "running") but never responded to button or wake word again
+# until the kernel OOM-killed it. With these timeouts every connect /
+# send attempt fails fast and the existing backoff-reconnect path
+# retries; combined with the systemd watchdog this makes any hang
+# self-healing.
+# Receive-side stalls are already covered by SERVER_IDLE_TIMEOUT_S
+# above (the conversation watchdog cancels the turn and reconnects).
+CONNECT_TIMEOUT_S = 30.0          # opening the Live API websocket
+CLOSE_TIMEOUT_S = 10.0            # closing it (a hung close also wedges run())
+SEND_TIMEOUT_S = 10.0             # any single send_* call (audio chunk, tool resp, …)
+
 # ---------- bluetooth ----------
 BT_HEADSET_NAME_SUBSTRING = "Baseus"
 
@@ -72,24 +89,26 @@ WAKE_COOLDOWN_S = 1.5
 # response to garbage. Threshold needs to sit between "real speech"
 # and "ambient noise / model TTS tail echo" peaks.
 #
-# Calibration data (peak RMS observed in real sessions):
-#   BT headset (CVSD 8 kHz):     real speech 8000-15000, noise <3000
-#   USB mic AB13X (16 kHz):      real speech  800- 4000, echo  <300
+# Calibration history (peak RMS of wake-driven captures, real sessions):
+#   round 1 (BT headset, 5/06):  real speech 8000-15000, noise <3000 → gate 4000
+#   round 2 (USB mic, 5/08):     real speech  822- 3971, echo  <300 → gate 500
+#   round 3 (June logs, 6/10):   gate 500 rejected REAL users at
+#                                186/195/234/390 (lab members standing at
+#                                normal distance — quieter than the dev
+#                                sitting next to the mic). Observed false
+#                                triggers in the same period: 9-135.
+#                                → gate 150 sits in the measured gap.
 #
-# AB13X is significantly less sensitive than the BT mic, AND the wake
-# capture path drops the first 500 ms (the "alexa" word itself) so the
-# capture peak reflects only what came AFTER the wake — typically the
-# follow-on question, which a user usually says quieter than the wake
-# word. Observed real captures: 822 / 1042 / 2585 / 3971. Background:
-# <800 peak, model TTS tail echo: <200.
-#
-# 500 catches all real wake-driven captures with margin while still
-# rejecting OWW's silent false-positives and post-response echoes.
-# OWW score gate (>0.65) and the server-side STT provide additional
-# layers, so this gate doesn't have to be the only filter.
+# The margin is thin (135 vs 186), so the occasional noise capture WILL
+# get uploaded — the cost is one API turn and a "didn't catch that"
+# reply, which is far better than silently ignoring a real user. The
+# OWW score gate (>=0.65) and server-side STT are additional filters.
+# Every capture now logs a "[capture-rms] decision=... peak=..." line
+# (see conversation._end_capture) so the next recalibration has
+# both-sided data; check acceptance stats via bin/health.py.
 # ENTER-mode capture stays gated by the very-permissive MIN_PEAK_RMS
 # below because the user explicitly pressed the key.
-WAKE_MIN_PEAK_RMS = 500.0
+WAKE_MIN_PEAK_RMS = 150.0
 
 # ---------- LEDs (APA102 on SPI) ----------
 LED_NUM_PIXELS = 3

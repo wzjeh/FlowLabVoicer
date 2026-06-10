@@ -19,7 +19,7 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 
-from nagaki_lab import config, prompts
+from nagaki_lab import config, prompts, sdnotify
 from nagaki_lab.audio.input import MicCapture
 from nagaki_lab.audio.output import SpeakerPlayback
 from nagaki_lab.audio import bluetooth as bt
@@ -121,6 +121,11 @@ async def amain(args: argparse.Namespace) -> None:
     if not has_tty:
         print("[no TTY — running in daemon mode; "
               "trigger via wake word or pushbutton]")
+
+    # Tell systemd we're up (Type=notify). The conversation loop then sends
+    # periodic WATCHDOG=1 pings; if the process ever wedges, systemd restarts
+    # it after WatchdogSec. No-op when run from a terminal.
+    sdnotify.ready()
 
     try:
         if ui is not None:

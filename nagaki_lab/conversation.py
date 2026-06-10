@@ -28,7 +28,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 import numpy as np
 
-from . import config, live as live_mod, prompts
+from . import config, live as live_mod, prompts, sdnotify
 from .audio.input import MicCapture, MicStream
 from .audio.output import SpeakerPlayback
 from .leds import LEDStatus
@@ -75,6 +75,7 @@ class ConversationLoop:
         self._state = (self.STATE_WAKE_LISTENING if wake_detector
                        else self.STATE_IDLE)
         self._exit = False
+        self._process_t0 = time.monotonic()   # for [health] uptime_h
 
         # turn-scoped state
         self._t0: Optional[float] = None
@@ -268,8 +269,27 @@ class ConversationLoop:
 
         backoff = config.RECONNECT_BACKOFF_INITIAL_S
         consecutive_failures = 0
+
+        # systemd watchdog heartbeat. Pinged (throttled to every 30 s) at
+        # every point where the loop is provably making progress: the top of
+        # each connect attempt and each tick of the healthy inner loop. All
+        # I/O segments between pings are time-bounded (CONNECT_TIMEOUT_S /
+        # SEND_TIMEOUT_S / backoff sleeps), so "no ping for WatchdogSec=300"
+        # can only mean a genuine hang — systemd then kills and restarts us.
+        # An extended Gemini outage keeps pinging (bounded retry cycle), so
+        # it does NOT cause restart churn. No-op outside systemd.
+        _last_ping = 0.0
+
+        def _heartbeat() -> None:
+            nonlocal _last_ping
+            now = time.monotonic()
+            if now - _last_ping >= 30.0:
+                sdnotify.watchdog()
+                _last_ping = now
+
         try:
             while not self._exit:
+                _heartbeat()
                 try:
                     async with self.live as session:
                         self._session_obj = session
@@ -286,6 +306,7 @@ class ConversationLoop:
 
                         try:
                             while not self._exit and not self._needs_reconnect:
+                                _heartbeat()
                                 await asyncio.sleep(0.2)
                             if self._needs_reconnect:
                                 # Trigger the outer reconnect path so we get a
@@ -401,8 +422,12 @@ class ConversationLoop:
         reason = "auto-silence" if auto else "enter_pressed"
         self._t_mark(f"{reason} (captured {duration:.2f}s, peak RMS {peak:.0f})")
 
+        src = "wake" if self._capture_was_wake_driven else "enter"
+
         # quality gate
         if duration < config.MIN_CAPTURE_SECONDS:
+            print(f"[capture-rms] decision=rejected reason=too_short "
+                  f"peak={peak:.0f} dur={duration:.2f}s src={src}")
             print(f"  [too short ({duration:.2f}s) — press ENTER and speak again]")
             await self._return_to_resting_state()
             return
@@ -416,6 +441,15 @@ class ConversationLoop:
             min_rms = config.WAKE_MIN_PEAK_RMS
         else:
             min_rms = config.MIN_PEAK_RMS
+        # Calibration log, printed for EVERY capture regardless of --quiet:
+        # in daemon mode the verbose _t_mark lines are suppressed, so without
+        # this line only rejections were visible in the journal and the
+        # accepted-side RMS distribution was unknowable — which is how the
+        # gate drifted out of calibration twice. bin/health.py aggregates
+        # these lines into an acceptance-rate + distribution report.
+        decision = "rejected" if peak < min_rms else "accepted"
+        print(f"[capture-rms] decision={decision} peak={peak:.0f} "
+              f"gate={min_rms:.0f} dur={duration:.2f}s src={src}")
         if peak < min_rms:
             if self._capture_was_wake_driven:
                 print(f"  [wake-capture too quiet (peak RMS {peak:.0f} < "
@@ -672,7 +706,12 @@ class ConversationLoop:
                             continue
 
                         now = time.monotonic()
-                        if now - last_status_t >= 5.0:
+                        # 60 s (was 5 s): at 5 s this line alone produced
+                        # ~74k journal lines per 5 days, pushing older logs
+                        # out of journald's retention window and wearing the
+                        # SD card. 60 s keeps the ambient-noise trend
+                        # visible while extending log retention to ~1 month.
+                        if now - last_status_t >= 60.0:
                             avg = sum(rms_window) / len(rms_window) if rms_window else 0.0
                             mx = max(rms_window) if rms_window else 0.0
                             print(f"  [wake-listening: avg RMS={avg:.0f}, "
@@ -758,10 +797,38 @@ class ConversationLoop:
             return
 
     # ---------- watchdog ----------
+    @staticmethod
+    def _read_rss_mb() -> float:
+        """Current process RSS in MB, from /proc/self/status (no psutil)."""
+        try:
+            with open("/proc/self/status") as f:
+                for line in f:
+                    if line.startswith("VmRSS:"):
+                        return int(line.split()[1]) / 1024.0
+        except OSError:
+            pass
+        return 0.0
+
     async def _watchdog_loop(self) -> None:
+        # Hourly memory-trend line, printed regardless of --quiet. There is
+        # a known slow leak (~12 MB/day; RSS grew 283 -> 583 MB over 25 days
+        # and ended in an OOM kill on 2026-06-10). MemoryMax in the systemd
+        # unit contains the damage; these lines provide the trend curve for
+        # eventually root-causing it. bin/health.py aggregates them.
+        # (This task is respawned per connection, so the throttle var resets
+        # on reconnect — the extra line per reconnect is a feature: it
+        # timestamps session boundaries in the trend data. uptime_h is
+        # process-wide via self._process_t0.)
+        last_health_t = 0.0
         try:
             while not self._exit:
                 await asyncio.sleep(0.5)
+
+                now = time.monotonic()
+                if now - last_health_t >= 3600.0:
+                    print(f"[health] rss_mb={self._read_rss_mb():.0f} "
+                          f"uptime_h={(now - self._process_t0) / 3600.0:.1f}")
+                    last_health_t = now
 
                 # ENTER-mode CAPTURING: did the user blow past
                 # MAX_CAPTURE_SECONDS without pressing ENTER again? The mic

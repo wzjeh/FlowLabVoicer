@@ -188,44 +188,83 @@ class LiveSession:
         )
 
     async def __aenter__(self) -> "LiveSession":
+        # Hard-bound the websocket open. Without this, a server-side outage
+        # can leave the handshake hanging forever — observed 2026-06-09:
+        # run() blocked inside connect() for 20 hours, device unresponsive
+        # until OOM-killed. On timeout we raise ConnectionError, which the
+        # run() reconnect loop treats like any other disconnect (backoff,
+        # retry) — every attempt is bounded, so the loop always progresses.
         self._cm = self._client.aio.live.connect(model=self.model, config=self._build_config())
-        self._session = await self._cm.__aenter__()
+        try:
+            self._session = await asyncio.wait_for(
+                self._cm.__aenter__(), timeout=config.CONNECT_TIMEOUT_S
+            )
+        except asyncio.TimeoutError:
+            self._cm = None
+            raise ConnectionError(
+                f"Live API connect timed out after {config.CONNECT_TIMEOUT_S:.0f}s"
+            ) from None
         return self
 
     async def __aexit__(self, exc_type, exc, tb):
         if self._cm is not None:
             try:
-                return await self._cm.__aexit__(exc_type, exc, tb)
+                return await asyncio.wait_for(
+                    self._cm.__aexit__(exc_type, exc, tb),
+                    timeout=config.CLOSE_TIMEOUT_S,
+                )
+            except asyncio.TimeoutError:
+                # A close that hangs is as wedging as a connect that hangs;
+                # drop our references and let GC / the OS reap the socket.
+                return False
             finally:
                 self._cm = None
                 self._session = None
 
     # ---------- send ----------
+    # All send paths are wrapped in SEND_TIMEOUT_S: a websocket in a half-dead
+    # state (server stopped reading, TCP buffer full) makes send() block
+    # forever, which would wedge _end_capture / _handle_tool_calls. TimeoutError
+    # propagates to the existing per-callsite error handling (upload-failure →
+    # reconnect), same as any other send exception.
+    async def _send_bounded(self, coro) -> None:
+        await asyncio.wait_for(coro, timeout=config.SEND_TIMEOUT_S)
+
     async def send_activity_start(self) -> None:
         """Mark the beginning of a user utterance. Required when server VAD
         is disabled (see _build_config) — without this the server will not
         treat subsequent audio as in-turn input."""
-        await self._session.send_realtime_input(activity_start=types.ActivityStart())
+        await self._send_bounded(
+            self._session.send_realtime_input(activity_start=types.ActivityStart())
+        )
 
     async def send_activity_end(self) -> None:
         """Mark the end of a user utterance. Triggers the server to generate
         a response. Without this the server keeps the turn open indefinitely
         (no transcript, no audio reply, eventual 25s watchdog reconnect)."""
-        await self._session.send_realtime_input(activity_end=types.ActivityEnd())
+        await self._send_bounded(
+            self._session.send_realtime_input(activity_end=types.ActivityEnd())
+        )
 
     async def send_audio_chunk(self, pcm: bytes) -> None:
-        await self._session.send_realtime_input(
-            audio=types.Blob(data=pcm, mime_type=f"audio/pcm;rate={config.INPUT_RATE}"),
+        await self._send_bounded(
+            self._session.send_realtime_input(
+                audio=types.Blob(data=pcm, mime_type=f"audio/pcm;rate={config.INPUT_RATE}"),
+            )
         )
 
     async def send_text(self, text: str) -> None:
-        await self._session.send_client_content(
-            turns=types.Content(role="user", parts=[types.Part(text=text)]),
-            turn_complete=True,
+        await self._send_bounded(
+            self._session.send_client_content(
+                turns=types.Content(role="user", parts=[types.Part(text=text)]),
+                turn_complete=True,
+            )
         )
 
     async def send_tool_responses(self, function_responses: list) -> None:
-        await self._session.send_tool_response(function_responses=function_responses)
+        await self._send_bounded(
+            self._session.send_tool_response(function_responses=function_responses)
+        )
 
     # ---------- receive ----------
     def _parse_message(self, msg) -> Iterable[tuple[str, Event]]:

@@ -123,7 +123,7 @@ Handlers may be sync or async; exceptions are caught per-handler.
 
 ---
 
-## Robustness layers (6 in total — no path crashes the program)
+## Robustness layers (9 in total — no path crashes OR wedges the program)
 
 1. **Tool 12s timeout** (`config.TOOL_CALL_TIMEOUT_S`): hung tool → error response to model, model can recover
 2. **Server idle 25s watchdog** (`config.SERVER_IDLE_TIMEOUT_S`): no server message for 25s → force session reconnect via session_resumption (handle preserved)
@@ -131,8 +131,13 @@ Handlers may be sync or async; exceptions are caught per-handler.
 4. **`on_user_action` try/except** (conversation.py): unexpected error → reconnect, don't crash UI
 5. **`TerminalUI` outer try/except** (ui_terminal.py): final safety net for prompt loop
 6. **Recv error → event** (`EVENT_RECV_ERROR` instead of raise): no "Task exception was never retrieved" warnings
+7. **I/O timeouts on every websocket call** (added 2026-06-10): connect 30s / close 10s / each send 10s (`CONNECT_TIMEOUT_S` / `CLOSE_TIMEOUT_S` / `SEND_TIMEOUT_S`). Motivating incident: 6/9 a reconnect hung inside an untimeouted `connect()` for **20 hours** — device looked alive but ignored button + wake until OOM-killed.
+8. **systemd watchdog** (`Type=notify`, `WatchdogSec=300`, `nagaki_lab/sdnotify.py`): main loop pings WATCHDOG=1 every 30s; ANY unforeseen hang → killed + restarted within 5 min. `Restart=always`.
+9. **MemoryMax=800M**: contains the known slow leak (~12 MB/day, RSS 283→583 MB over 25 days → OOM on 6/10). Cap hit → clean unit restart. Hourly `[health] rss_mb=` journal lines track the trend.
 
 Plus: **fresh session policy** — each program start is a clean slate, no prior memory injected. SQLite turn log only for human reference.
+
+**Maintenance entry point**: `python bin/health.py` — one-shot report (service / temp / event counts / RMS calibration / RSS trend / recent errors). Run it first whenever the assistant "feels broken". `[capture-rms]` lines log every accept/reject decision for gate recalibration (history in config.py; currently 150 after three rounds: 4000 BT → 500 USB-dev → 150 USB-real-users).
 
 ---
 

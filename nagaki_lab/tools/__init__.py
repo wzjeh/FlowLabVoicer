@@ -27,14 +27,25 @@ DISPATCH: dict[str, Callable[..., Awaitable[dict]]] = {
 
 
 def get_tool_declarations() -> list[types.Tool]:
-    """One Tool object containing every FunctionDeclaration."""
+    """All tools for the Live session: Google Search grounding + one Tool
+    object containing every local FunctionDeclaration.
+
+    google_search gives the model live web data (weather, news, prices,
+    recent events) so general questions get real answers instead of
+    refusals — verified to coexist with function_declarations on
+    gemini-2.5-flash-native-audio (2026-06-10). Search runs server-side;
+    nothing to dispatch locally.
+    """
     decls: list[types.FunctionDeclaration] = []
     decls.extend(timer.DECLARATIONS)
     decls.extend(chemistry.DECLARATIONS)
     decls.extend(translation.DECLARATIONS)
     decls.extend(system.DECLARATIONS)
     decls.extend(music.DECLARATIONS)
-    return [types.Tool(function_declarations=decls)]
+    return [
+        types.Tool(google_search=types.GoogleSearch()),
+        types.Tool(function_declarations=decls),
+    ]
 
 
 def init_caches(db_path) -> None:

@@ -39,7 +39,11 @@ from .tools.music import (
     pause_current as _music_pause,
     resume_current as _music_resume,
 )
-from .tools.timer import play_beep_blocking, play_tick_blocking
+from .tools.timer import (
+    play_beep_blocking,
+    play_tick_blocking,
+    play_error_blocking,
+)
 from .wake import WakeWordDetector
 from google.genai import types
 
@@ -93,6 +97,16 @@ class ConversationLoop:
         self._session_obj = None
         self._turn_task: Optional[asyncio.Task] = None
         self._needs_reconnect = False
+        # Set when the server sends goAway mid-turn: we finish the current
+        # turn, then rotate to a fresh session (checked in
+        # _return_to_resting_state). Reconnecting immediately would kill the
+        # in-flight reply.
+        self._reconnect_when_idle = False
+        # Set the moment a turn is shipped; cleared when the model produces
+        # its first audio chunk. If a turn ends (reconnect / error) while
+        # this is still True, the user got NO reply — play the error cue so
+        # they hear "failed, retry" instead of silence.
+        self._awaiting_reply = False
 
         # Subscribe our orchestration logic to LiveSession events. The session
         # itself does not know about us; any other consumer (a future display,
@@ -463,6 +477,7 @@ class ConversationLoop:
         # ship it
         await self._set_state(self.STATE_RESPONDING)
         self._abort_flag = False
+        self._awaiting_reply = True   # cleared when first audio arrives
         self._last_server_activity = time.monotonic()
         self._first_audio_marked = False
         self._capturing_user_chunks = []
@@ -496,6 +511,8 @@ class ConversationLoop:
             # websocket-level failure during the upload burst. Don't crash —
             # flag the session for reconnect and return to a clean idle state.
             self._t_mark(f"upload FAILED: {type(e).__name__}: {e}")
+            print("  [upload failed — playing error cue so you know to retry]")
+            self._play_error_cue()   # user hears a tone instead of silence
             self._request_reconnect(f"upload failed: {type(e).__name__}: {e}")
             await self._return_to_resting_state()
             return
@@ -509,6 +526,7 @@ class ConversationLoop:
     async def _abort_response(self) -> None:
         self._t_mark("user_abort")
         self._abort_flag = True
+        self._awaiting_reply = False   # deliberate abort — no error cue
         self.speaker.abort()
         # Cancel the receive task to stop dispatching events to handlers.
         if self._turn_task is not None and not self._turn_task.done():
@@ -539,6 +557,11 @@ class ConversationLoop:
         target = (self.STATE_WAKE_LISTENING if self.wake_detector
                   else self.STATE_IDLE)
         await self._set_state(target)
+        # Deferred goAway rotation: the turn is now finished, so it's safe
+        # to drop the (soon-to-die) session and reconnect on a fresh one.
+        if self._reconnect_when_idle and not self._needs_reconnect:
+            self._reconnect_when_idle = False
+            self._request_reconnect("server goAway — rotating now that turn is done")
 
     # ---------- receive (per-turn) ----------
     async def _receive_one_turn(self) -> None:
@@ -587,6 +610,7 @@ class ConversationLoop:
         if not self._first_audio_marked:
             self._t_mark("first_audio_chunk")
             self._first_audio_marked = True
+            self._awaiting_reply = False   # reply is arriving — no error cue
             await self.leds.set_state("speaking")
             # (Music ducking happens in _set_state on the IDLE→CAPTURING
             # transition, before any audio is even captured.)
@@ -596,7 +620,16 @@ class ConversationLoop:
         await self._handle_tool_calls(ev.function_calls)
 
     async def _on_go_away(self, ev) -> None:
-        print(f"\n  [server goAway: {ev.time_left}]")
+        # The server announced it will close this connection soon (observed
+        # "goAway: 50s" during a Gemini degradation window). Rotate to a
+        # fresh session BEFORE the old one dies mid-interaction. If we're
+        # busy, finish the current turn first (reconnecting now would kill
+        # the in-flight reply) — _return_to_resting_state picks up the flag.
+        print(f"\n  [server goAway: {ev.time_left} — rotating to a fresh session]")
+        if self.is_busy:
+            self._reconnect_when_idle = True
+        else:
+            self._request_reconnect(f"server goAway ({ev.time_left})")
 
     async def _on_turn_complete(self, ev) -> None:
         self._t_mark("turn_complete")
@@ -612,6 +645,10 @@ class ConversationLoop:
                 await self.turn_log.append(self.session_id, "assistant", asst_text)
             elif user_text:
                 print("<<< [model returned no audio — please ask again]")
+            # If the turn ended without any audio ever playing, the user got
+            # silence — cue them to retry. No-op if audio did play (flag was
+            # cleared in _on_audio_chunk).
+            self._play_error_cue()
         self._t_reset()
 
     async def _on_recv_error(self, ev) -> None:
@@ -619,6 +656,9 @@ class ConversationLoop:
         # main run() loop polls _needs_reconnect every 200 ms and triggers
         # a clean reconnect via session_resumption.
         self.speaker.abort()
+        # If the reply hadn't started yet, the user gets nothing this turn —
+        # play the error cue so silence never happens on a dropped turn.
+        self._play_error_cue()
         self._request_reconnect(
             f"recv error: {type(ev.exception).__name__}: {ev.exception}"
         )
@@ -755,6 +795,23 @@ class ConversationLoop:
         # by ear alone.
         try:
             play_tick_blocking()
+        except Exception:
+            pass
+
+    def _play_error_cue(self) -> None:
+        """Fire the descending two-tone error cue in the background, but only
+        if the user was actually waiting for a reply that never came. Cheap
+        insurance against the worst demo failure mode: silent nothing after a
+        1011 outage or mid-turn disconnect. Idempotent per turn."""
+        if not self._awaiting_reply:
+            return
+        self._awaiting_reply = False
+        asyncio.create_task(asyncio.to_thread(self._error_cue))
+
+    @staticmethod
+    def _error_cue() -> None:
+        try:
+            play_error_blocking()
         except Exception:
             pass
 

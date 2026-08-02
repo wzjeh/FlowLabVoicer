@@ -46,6 +46,16 @@ _BEEP_SEQ = (_BEEP + _GAP) * 3
 # apart by ear. Used by ConversationLoop._on_wake_detected.
 _TICK = _make_beep_pcm(freq=1320.0, duration=0.12, gain=0.30)
 
+# Two-tone descending "uh-oh" for turn failure (upload 1011, mid-turn
+# disconnect). Low + descending so it reads as "error / try again",
+# clearly distinct from the wake tick (high, single) and the timer beep
+# (mid, triple). Used by ConversationLoop when a turn produces no reply —
+# the whole point is that the user hears *something* instead of silence.
+_ERR_GAP = b"\x00\x00" * int(config.OUTPUT_RATE * 0.08)
+_ERROR_SEQ = (_make_beep_pcm(freq=440.0, duration=0.16, gain=0.35)
+              + _ERR_GAP
+              + _make_beep_pcm(freq=330.0, duration=0.22, gain=0.35))
+
 
 def _aplay_pcm_blocking(pcm: bytes) -> None:
     """Pipe a raw PCM blob through aplay synchronously, swallowing aplay's
@@ -67,6 +77,11 @@ def play_beep_blocking() -> None:
 def play_tick_blocking() -> None:
     """Play a single short higher-pitch tick (wake-word ack)."""
     _aplay_pcm_blocking(_TICK)
+
+
+def play_error_blocking() -> None:
+    """Play the two-tone descending error cue (turn failed, please retry)."""
+    _aplay_pcm_blocking(_ERROR_SEQ)
 
 
 # ---------- timer registry ----------

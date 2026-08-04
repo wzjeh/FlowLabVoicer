@@ -75,14 +75,21 @@ BT_HEADSET_NAME_SUBSTRING = "Baseus"
 # false-positive rate is lowest. To switch back, just change this string;
 # any model in openwakeword's resources/models/ is selectable by name stem.
 DEFAULT_WAKE_WORD = "alexa"
-# 0.65 with post-response mute (see ConversationLoop._set_state) gives
-# the cleanest UX: stricter than the original 0.5, comfortably above the
-# noise-floor 0.57, and the mute window covers the dominant remaining
-# false-positive source (model TTS tail echoing back through the BT mic).
-# Trade-off: very-marginal real wakes (~0.62 — borderline mumbles) will
-# miss; loud-clear "alexa" reliably scores 0.7+ even on CVSD. If you
-# personally tend to under-articulate, drop to 0.6.
-WAKE_WORD_THRESHOLD = 0.65
+# Threshold history:
+#   BT headset:  0.65 (noise floor ~0.57, needed margin)
+#   USB AB13X:   0.65 (near-field, real "alexa" scored 0.7-1.0 reliably)
+#   XVF3800:     0.40 — measured wake scores by distance (normal voice):
+#       0.5 m -> 0.81,  1.5 m -> 0.87,  3 m -> 0.07 (== noise floor!).
+#     The far-field array's DSP (AGC / noise-suppression / de-reverb /
+#     beamforming) reshapes the audio so OpenWakeWord (near-field-trained)
+#     can't recognise "alexa" at 3 m AT ALL — the mic hears you fine
+#     (RMS 3109 at 3 m) but the wake features are gone. No threshold fixes
+#     that: 0.07 is indistinguishable from silence. 0.40 maximises the
+#     near/mid range (idle noise floor is 0.06-0.19, so 0.40 is safe) —
+#     reliable to ~2 m, which covers standing at the bench. Beyond ~2 m,
+#     use the physical button or step closer. NOTE: shout LESS, not more —
+#     OWW wants a normal speaking voice; over-loud "alexa" scores WORSE.
+WAKE_WORD_THRESHOLD = 0.40
 WAKE_COOLDOWN_S = 1.5
 # Wake-mode captures that contain only background noise should NOT be
 # uploaded — they waste an API turn and let the model hallucinate a

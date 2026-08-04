@@ -128,6 +128,7 @@ class ConversationLoop:
         self._wake_capture_started_at: Optional[float] = None
         self._wake_recent_rms: list[float] = []   # rolling window for silence detect
         self._wake_chunks_remaining: int = 0      # how many chunks to discard right after wake
+        self._wake_speech_seen: bool = False      # end-of-speech arms only after this
         # Distinguishes "wake-fired capture" from "user pressed ENTER as
         # fallback in wake mode". Wake-fired captures get auto-end-on-silence
         # AND a strict RMS gate to discard false-trigger garbage. ENTER-fired
@@ -149,6 +150,7 @@ class ConversationLoop:
     WAKE_SILENCE_RMS = 500.0
     WAKE_GRACE_S = 0.6              # min capture before silence detection arms
     WAKE_PRE_DISCARD_MS = 500       # drop this many ms after wake (the wake word itself)
+    WAKE_NO_SPEECH_TIMEOUT_S = 5.0  # give up if user never starts speaking
 
     @property
     def state(self) -> str:
@@ -422,6 +424,7 @@ class ConversationLoop:
             self._wake_capture_peak = 0.0
             self._wake_capture_started_at = time.monotonic()
             self._wake_recent_rms = []
+            self._wake_speech_seen = False
             self._wake_chunks_remaining = 0
         if self.verbose:
             print("  [recording — speak now; press ENTER to send]")
@@ -790,6 +793,7 @@ class ConversationLoop:
         self._wake_capture_peak = 0.0
         self._wake_capture_started_at = time.monotonic()
         self._wake_recent_rms = []
+        self._wake_speech_seen = False
         self._wake_chunks_remaining = max(
             1, self.WAKE_PRE_DISCARD_MS // config.INPUT_BLOCK_MS
         )
@@ -847,6 +851,16 @@ class ConversationLoop:
         if not self._capture_was_wake_driven:
             return
 
+        # Speech-begin detection: the end-of-speech logic must not arm until
+        # the user has actually STARTED talking. Users naturally pause after
+        # "alexa" (waiting for the ack tick); with a bare silence window the
+        # capture ended 0.8 s after the wake with nothing in it — observed
+        # as back-to-back 0.8 s peak≈100 rejected captures while the user
+        # was still drawing breath. Wait up to WAKE_NO_SPEECH_TIMEOUT_S for
+        # speech; once heard, end 0.8 s after it stops.
+        if rms >= self.WAKE_SILENCE_RMS:
+            self._wake_speech_seen = True
+
         elapsed = time.monotonic() - (self._wake_capture_started_at or time.monotonic())
 
         # hard cap
@@ -854,7 +868,13 @@ class ConversationLoop:
             await self._end_capture(auto=True)
             return
 
-        # silence-driven end
+        # user never spoke — give up quietly (RMS gate will discard it)
+        if not self._wake_speech_seen:
+            if elapsed >= self.WAKE_NO_SPEECH_TIMEOUT_S:
+                await self._end_capture(auto=True)
+            return
+
+        # silence-driven end — only after speech has been heard
         if (elapsed >= self.WAKE_GRACE_S
                 and len(self._wake_recent_rms) >= max_window
                 and all(r < self.WAKE_SILENCE_RMS for r in self._wake_recent_rms)):

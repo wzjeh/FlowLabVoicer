@@ -136,9 +136,17 @@ class ConversationLoop:
         self._capture_was_wake_driven: bool = False
 
     # tunables for wake-driven auto-end-of-capture
-    WAKE_CAPTURE_MAX_S = 15.0       # hard cap on auto capture
-    WAKE_SILENCE_WINDOW_S = 1.0     # how much trailing silence triggers end
-    WAKE_SILENCE_RMS = 250.0        # RMS below this counts as silence
+    WAKE_CAPTURE_MAX_S = 12.0       # hard cap on auto capture (was 15)
+    WAKE_SILENCE_WINDOW_S = 0.8     # how much trailing silence triggers end
+    # 500 (was 250): the XVF3800's AGC boosts gain when you stop talking,
+    # so post-speech "silence" residual hovers ~200-400 for a second or two
+    # before the AGC settles. At 250 the end-of-speech detector never fired
+    # and captures ran to the hard cap (5-10 s observed), polluting the
+    # transcript with trailing noise -> the model answered a fragment
+    # ("嗯 現在" from a 5 s capture). 500 sits above the AGC-decay residual
+    # (settled idle floor is <190) yet well below speech (1000-6000), so
+    # captures now end ~0.8 s after you actually stop.
+    WAKE_SILENCE_RMS = 500.0
     WAKE_GRACE_S = 0.6              # min capture before silence detection arms
     WAKE_PRE_DISCARD_MS = 500       # drop this many ms after wake (the wake word itself)
 

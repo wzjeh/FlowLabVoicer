@@ -84,12 +84,15 @@ DEFAULT_WAKE_WORD = "alexa"
 #     beamforming) reshapes the audio so OpenWakeWord (near-field-trained)
 #     can't recognise "alexa" at 3 m AT ALL — the mic hears you fine
 #     (RMS 3109 at 3 m) but the wake features are gone. No threshold fixes
-#     that: 0.07 is indistinguishable from silence. 0.40 maximises the
-#     near/mid range (idle noise floor is 0.06-0.19, so 0.40 is safe) —
-#     reliable to ~2 m, which covers standing at the bench. Beyond ~2 m,
-#     use the physical button or step closer. NOTE: shout LESS, not more —
-#     OWW wants a normal speaking voice; over-loud "alexa" scores WORSE.
-WAKE_WORD_THRESHOLD = 0.40
+#     that: 0.07 is indistinguishable from silence. 0.35 maximises the
+#     near/mid hands-free range (idle score floor is 0.06-0.19, so 0.35
+#     stays clear of false triggers) — reliable to ~2 m. A false wake is
+#     now cheap: it captures near-silence, fails the RMS gate, and the
+#     error cue makes it obvious, so we bias toward sensitivity. Beyond
+#     ~2 m, use the physical BUTTON (100% reliable, always works) or step
+#     closer. NOTE: shout LESS, not more — OWW wants a normal speaking
+#     voice; over-loud "alexa" scores WORSE.
+WAKE_WORD_THRESHOLD = 0.35
 WAKE_COOLDOWN_S = 1.5
 # Wake-mode captures that contain only background noise should NOT be
 # uploaded — they waste an API turn and let the model hallucinate a
